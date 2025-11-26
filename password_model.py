@@ -1,61 +1,111 @@
+"""Utilities to train and use a password strength classifier.
+
+The module is intentionally lightweight so it can be imported without
+triggering training. Call `train_model()` once to build a model, then
+pass the returned `(model, vectorizer)` pair to `predict_strength()`.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Tuple
+
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
 
-# --- Step 1: Create a small mock dataset ---
-"""data = 
-{
-    'password': [
-        'password123', 'P@ssw0rd!', '123456', 'letmein', 'sunshine',
-        'Qwerty2024', 'Myp@ssword2025', 'abcABC123!', 'h3lloworld',
-        'Xy!94zaQ', '!!Aa123Bb', 'k!M9x#12ghT'
-    ],
-    'strength': [
-        0, 0, 0, 0, 0,   # weak
-        1, 1, 1,          # medium
-        2, 2, 2, 2        # strong
-    ]
-}"""
+# Strength label mapping used across the project
+LABELS = {0: "Weak", 1: "Medium", 2: "Strong"}
+
+# Cache the most recently trained model to avoid retraining within a process
+_MODEL_CACHE: Optional[Tuple[LogisticRegression, TfidfVectorizer]] = None
 
 
-# --- Step 1: Load dataset ---
-import pandas as pd
+def load_dataset(csv_path: str = "data.csv") -> pd.DataFrame:
+    """Load and clean the password dataset."""
+    path = Path(csv_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found at {path.resolve()}")
 
-df = pd.read_csv("data.csv", on_bad_lines='skip')
+    df = pd.read_csv(path, on_bad_lines="skip")
+    df = df.dropna(subset=["password", "strength"])
+    df = df[df["password"].apply(lambda x: isinstance(x, str) and x.strip() != "")]
+    df["strength"] = df["strength"].astype(int)
+    return df
 
-# Remove any rows where the password is missing or not a string
-df = df.dropna(subset=['password'])
-df = df[df['password'].apply(lambda x: isinstance(x, str) and x.strip() != '')]
 
-print(df.head())
-print(df['strength'].value_counts())
+def train_model(
+    csv_path: str = "data.csv",
+    sample_n: Optional[int] = None,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    max_iter: int = 1000,
+    verbose: bool = False,
+) -> Tuple[LogisticRegression, TfidfVectorizer]:
+    """
+    Train the password strength model.
 
-# --- Step 2: Convert passwords into numerical features ---
-vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2,4))
-X = vectorizer.fit_transform(df['password'])
-y = df['strength']
+    Returns a `(model, vectorizer)` tuple. The trained objects are cached for
+    reuse in this process; call again to retrain with different options.
+    """
+    global _MODEL_CACHE
 
-# --- Step 3: Split data ---
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    df = load_dataset(csv_path)
+    if sample_n and len(df) > sample_n:
+        df = df.sample(sample_n, random_state=random_state)
 
-# --- Step 4: Train a simple model ---
-model = LogisticRegression(max_iter=1000)
-model.fit(X_train, y_train)
+    vectorizer = TfidfVectorizer(analyzer="char", ngram_range=(2, 4))
+    X = vectorizer.fit_transform(df["password"])
+    y = df["strength"]
 
-# --- Step 5: Evaluate the model ---
-y_pred = model.predict(X_test)
-print(classification_report(y_test, y_pred))
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
 
-# --- Step 6: Try predictions ---
-def predict_strength(pw):
-    vec = vectorizer.transform([pw])
-    pred = model.predict(vec)[0]
-    label = {0: "Weak", 1: "Medium", 2: "Strong"}[pred]
-    print(f"Password: {pw}  →  Predicted Strength: {label}")
+    model = LogisticRegression(max_iter=max_iter, n_jobs=1)
+    model.fit(X_train, y_train)
 
-print("\n--- Test Predictions ---")
-predict_strength("password123")
-predict_strength("Summer2025!")
-predict_strength("Tg!93xQ#zA")
+    if verbose:
+        y_pred = model.predict(X_test)
+        report = classification_report(y_test, y_pred, target_names=LABELS.values())
+        print("Validation report:")
+        print(report)
+
+    _MODEL_CACHE = (model, vectorizer)
+    return model, vectorizer
+
+
+def _resolve_model_and_vectorizer(
+    model: Optional[LogisticRegression], vectorizer: Optional[TfidfVectorizer]
+) -> Tuple[LogisticRegression, TfidfVectorizer]:
+    if model and vectorizer:
+        return model, vectorizer
+    if _MODEL_CACHE is not None:
+        return _MODEL_CACHE
+    raise RuntimeError("Model not provided and no cached model available. Call train_model() first.")
+
+
+def predict_strength(
+    password: str,
+    model: Optional[LogisticRegression] = None,
+    vectorizer: Optional[TfidfVectorizer] = None,
+) -> str:
+    """Predict password strength label."""
+    if not isinstance(password, str) or password.strip() == "":
+        raise ValueError("Password must be a non-empty string.")
+
+    model, vectorizer = _resolve_model_and_vectorizer(model, vectorizer)
+    vec = vectorizer.transform([password])
+    pred = int(model.predict(vec)[0])
+    return LABELS.get(pred, str(pred))
+
+
+if __name__ == "__main__":
+    # Minimal demo for manual runs
+    model, vectorizer = train_model(verbose=True)
+    sample_passwords = ["password123", "Summer2025!", "Tg!93xQ#zA"]
+    for pw in sample_passwords:
+        label = predict_strength(pw, model, vectorizer)
+        print(f"{pw:15s} -> {label}")
