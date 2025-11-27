@@ -109,3 +109,13 @@ if __name__ == "__main__":
     for pw in sample_passwords:
         label = predict_strength(pw, model, vectorizer)
         print(f"{pw:15s} -> {label}")
+
+
+
+#need to load model here that was trained in "train_mlp" and test with user input password
+#put thru brute force function from "brute_force.py" 
+#"IF" mlp says its "WEAK" 
+#||
+#"IF" brute force says can be cracked under X amount of time
+#THEN give to feedback model to give user suggestions
+
