@@ -1,4 +1,16 @@
-from password_model import predict_strength, train_model
+
+
+import pandas as pd
+
+COMMON_PWDS = set()
+
+def load_common_passwords(path="ignis-1K.csv"):
+    global COMMON_PWDS
+    df = pd.read_csv(path, header=None)
+    COMMON_PWDS = set(p.lower().strip() for p in df[0].astype(str))
+
+load_common_passwords()
+
 
 def estimate_bruteforce_time(pw, guesses_per_second=1e6):
     """
@@ -49,34 +61,15 @@ def format_time(seconds):
     years = days / 365
     return f"{years:.2e} years"
 
-def analyze_password(pw, model, vectorizer, guesses_per_second=1e6):
-    strength = predict_strength(pw, model=model, vectorizer=vectorizer)
-    t_seconds = estimate_bruteforce_time(pw, guesses_per_second)
-    t_str = format_time(t_seconds)
-
-    print(f"Password: {pw}")
-    print(f"  ML Strength Label: {strength}")
-    print(f"  Estimated brute-force time (@ {guesses_per_second:.0f} guesses/sec): {t_str}")
-    print()
-
-if __name__ == "__main__":
-    print("Training model (this may take a moment)...")
-    model, vectorizer = train_model(sample_n=50000)
-
-    print("\n--- Brute-force Analysis ---")
-    test_passwords = [
-        "password123",
-        "Summer2025!",
-        "Tg!93xQ#zA",
-        "Yozy!2025CS!!"
-    ]
-
-    for pw in test_passwords:
-        analyze_password(pw, model, vectorizer)
+def analyze_password(pw, guesses_per_second=1e6):
+     # 1) Check dictionary hits first
+    if pw.lower() in COMMON_PWDS:
+        print(f"Password: {pw}")
+        print("  ❌ This password appears in the common-passwords list!")
+        print("  Attackers crack it instantly.\n")
+        return  # no need to bother with brute-force
     
-    # Optional: interactive
-    while True:
-        user_pw = input("Enter a password to analyze (or 'q' to quit): ")
-        if user_pw.lower().strip() == 'q':
-            break
-        analyze_password(user_pw, model, vectorizer)
+    t_seconds = estimate_bruteforce_time(pw, guesses_per_second)
+    #t_str = format_time(t_seconds)
+
+    return t_seconds#t_str
