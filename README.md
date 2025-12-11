@@ -6,10 +6,15 @@ Description:
 Required Libraries and Installations:
 
 pip install pandas
+
 pip install torch
+
 pip install transformers
+
 pip install sklearn
+
 pip install joblib
+
 pip install peft
 
 How to generate files and run this program:
